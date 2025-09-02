@@ -7,7 +7,6 @@
 3D Gaussian Splatting Diary
 - Metadata lagras i localStorage nyckel "gsDiary.v1.weeks"
 - Blobs (tumnaglar & PDF:er) lagras i IndexedDB "gsDiaryDB" store "files"
-- Inloggningssession lagras i sessionStorage nyckel "gsDiary.session"
 - Tema lagras i localStorage nyckel "gsDiary.v1.theme"
 - Rensa lagring via webbläsarens utvecklarverktyg för att nollställa appen
 -->
@@ -117,10 +116,6 @@ main{
 .modal-content iframe{
  width:80vw;height:80vh;border:0;
 }
-.login-screen{
- position:fixed;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:var(--bg);z-index:40;
-}
-.login-box{border:1px solid var(--muted);padding:2rem;border-radius:.5rem;box-shadow:0 2px 4px rgba(0,0,0,.1);}
 .form-field{margin-bottom:.5rem;}
 .form-field label{display:block;margin-bottom:.25rem;}
 /* compare layout */
@@ -131,27 +126,12 @@ main{
 </style>
 </head>
 <body>
-<div id="loginScreen" class="login-screen">
-  <form id="loginForm" class="login-box" aria-label="Inloggning">
-    <div class="form-field">
-      <label for="loginUser">Användarnamn</label>
-      <input id="loginUser" required>
-    </div>
-    <div class="form-field">
-      <label for="loginPass">Lösenord</label>
-      <input id="loginPass" type="password" required>
-    </div>
-    <button type="submit">Logga in</button>
-    <div id="loginError" style="color:red;margin-top:.5rem;"></div>
-  </form>
-</div>
 <header>
   <h1>Byggdagbok 3D</h1>
   <div class="top-actions">
     <button id="sidebarToggle" aria-label="Visa/Dölj sidomeny">☰</button>
     <button id="compareToggle">Jämför veckor</button>
     <button id="themeToggle" aria-label="Tema">🌗</button>
-    <button id="logoutBtn">Logga ut</button>
   </div>
 </header>
 <div id="app" class="app hidden" aria-label="Applikation">
@@ -198,19 +178,14 @@ main{
 <script type="module">
 const LS_KEY='gsDiary.v1.weeks';
 const THEME_KEY='gsDiary.v1.theme';
-const SESSION_KEY='gsDiary.session';
 const DB_NAME='gsDiaryDB';
 
-const loginScreen=document.getElementById('loginScreen');
-const loginForm=document.getElementById('loginForm');
-const loginError=document.getElementById('loginError');
 const app=document.getElementById('app');
 const weekListEl=document.getElementById('weekList');
 const searchEl=document.getElementById('search');
 const mainEl=document.getElementById('main');
 const themeToggle=document.getElementById('themeToggle');
 const compareToggle=document.getElementById('compareToggle');
-const logoutBtn=document.getElementById('logoutBtn');
 const sidebar=document.getElementById('sidebar');
 const sidebarToggle=document.getElementById('sidebarToggle');
 const addWeekBtn=document.getElementById('addWeek');
@@ -224,21 +199,6 @@ themeToggle.addEventListener('click',()=>{
   const t=localStorage.getItem(THEME_KEY)==='dark'?'light':'dark';
   localStorage.setItem(THEME_KEY,t);applyTheme();
 });
-
-loginForm.addEventListener('submit',e=>{
-  e.preventDefault();
-  const u=loginForm.loginUser.value;
-  const p=loginForm.loginPass.value;
-  if(u==='admin1'&&p==='admin1'){
-    sessionStorage.setItem(SESSION_KEY,'1');
-    loginScreen.classList.add('hidden');
-    startApp();
-  }else{
-    loginError.textContent='Felaktiga uppgifter.';
-  }
-});
-logoutBtn.addEventListener('click',()=>{sessionStorage.removeItem(SESSION_KEY);location.reload();});
-
 function ensureSampleWeek(){
   if(listWeeks().length===0){
     const w={id:crypto.randomUUID(),label:'Vecka 34',embedSrc:'',description:'',thumbBlobId:null,pdfBlobIds:[],pdfNames:[],createdAt:Date.now()};
@@ -456,7 +416,7 @@ function handleHash(){
 }
 window.addEventListener('hashchange',handleHash);
 
-if(sessionStorage.getItem(SESSION_KEY)==='1'){loginScreen.classList.add('hidden');startApp();}
+startApp();
 </script>
 </body>
 </html>
