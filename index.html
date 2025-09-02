@@ -1,0 +1,462 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<title>3D Gaussian Splatting Dagbok</title>
+<!--
+3D Gaussian Splatting Diary
+- Metadata lagras i localStorage nyckel "gsDiary.v1.weeks"
+- Blobs (tumnaglar & PDF:er) lagras i IndexedDB "gsDiaryDB" store "files"
+- Inloggningssession lagras i sessionStorage nyckel "gsDiary.session"
+- Tema lagras i localStorage nyckel "gsDiary.v1.theme"
+- Rensa lagring via webbläsarens utvecklarverktyg för att nollställa appen
+-->
+<style>
+:root{
+ --bg:#f5f5f5;
+ --text:#111;
+ --muted:#666;
+ --accent:#0ea5e9;
+}
+.dark{
+ --bg:#1f2937;
+ --text:#f5f5f5;
+ --muted:#94a3b8;
+ --accent:#38bdf8;
+}
+*{box-sizing:border-box;}
+body{
+ margin:0;
+ font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+ background:var(--bg);
+ color:var(--text);
+ line-height:1.4;
+}
+button,input,textarea,select{
+ font-family:inherit;
+}
+.hidden{display:none;}
+a{color:var(--accent);}
+header{
+ display:flex;
+ align-items:center;
+ justify-content:space-between;
+ padding:.5rem 1rem;
+ background:var(--bg);
+ backdrop-filter:blur(5px);
+ position:sticky;
+ top:0;
+ z-index:10;
+ box-shadow:0 2px 4px rgba(0,0,0,.1);
+}
+header h1{font-size:1.25rem;margin:0;}
+.top-actions button{margin-left:.5rem;}
+.app{
+ display:flex;
+ height:calc(100vh - 56px);
+}
+aside{
+ width:240px;
+ border-right:1px solid var(--muted);
+ overflow:auto;
+ padding:1rem;
+ transition:transform .3s;
+}
+aside.collapsed{transform:translateX(-100%);}
+#sidebarToggle{display:none;}
+@media(max-width:700px){
+ aside{position:fixed;left:0;top:56px;height:calc(100vh - 56px);background:var(--bg);z-index:20;}
+ #sidebarToggle{display:inline-block;}
+}
+main{
+ flex:1;
+ overflow:auto;
+ padding:1rem;
+}
+.week-item{
+ display:flex;
+ align-items:center;
+ margin-bottom:.5rem;
+ padding:.25rem;
+ border-radius:.25rem;
+ transition:background .2s;
+}
+.week-item:hover,.week-item:focus-within{background:rgba(0,0,0,.05);}
+.week-item img{
+ width:40px;height:40px;object-fit:cover;border-radius:.25rem;margin-right:.5rem;
+}
+.week-item .avatar{
+ width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+ background:var(--accent);color:#fff;margin-right:.5rem;
+}
+.week-item details{margin-left:auto;}
+.week-item details[open]{position:relative;}
+.week-item details[open] > div{
+ position:absolute;right:0;top:100%;background:var(--bg);border:1px solid var(--muted);padding:.25rem;border-radius:.25rem;box-shadow:0 2px 4px rgba(0,0,0,.2);
+}
+.week-item details button{display:block;width:100%;background:none;border:none;padding:.25rem .5rem;text-align:left;}
+.week-item details button:hover{background:rgba(0,0,0,.05);}
+#search{width:100%;padding:.25rem;margin-bottom:.5rem;}
+#weekViewer .viewer-frame,#compareA .viewer-frame,#compareB .viewer-frame{position:relative;padding-top:56.25%;}
+#weekViewer iframe,#compareA iframe,#compareB iframe{
+ position:absolute;top:0;left:0;width:100%;height:100%;border:0;
+}
+.viewer-controls{
+ display:flex;gap:.5rem;margin:.5rem 0;
+}
+.no-context{ }
+#pdfList button{
+ display:block;margin:.25rem 0;padding:.5rem;border:1px solid var(--muted);background:none;border-radius:.25rem;width:100%;text-align:left;
+}
+.modal{
+ position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:30;
+}
+.modal-content{
+ background:var(--bg);max-width:90%;max-height:90%;padding:1rem;border-radius:.5rem;overflow:auto;
+}
+.modal-content iframe{
+ width:80vw;height:80vh;border:0;
+}
+.login-screen{
+ position:fixed;top:0;left:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;background:var(--bg);z-index:40;
+}
+.login-box{border:1px solid var(--muted);padding:2rem;border-radius:.5rem;box-shadow:0 2px 4px rgba(0,0,0,.1);}
+.form-field{margin-bottom:.5rem;}
+.form-field label{display:block;margin-bottom:.25rem;}
+/* compare layout */
+.compare-wrap{display:flex;gap:1rem;flex-wrap:wrap;}
+.compare-col{flex:1;min-width:300px;}
+/* focus styles */
+:focus{outline:2px solid var(--accent);outline-offset:2px;}
+</style>
+</head>
+<body>
+<div id="loginScreen" class="login-screen">
+  <form id="loginForm" class="login-box" aria-label="Inloggning">
+    <div class="form-field">
+      <label for="loginUser">Användarnamn</label>
+      <input id="loginUser" required>
+    </div>
+    <div class="form-field">
+      <label for="loginPass">Lösenord</label>
+      <input id="loginPass" type="password" required>
+    </div>
+    <button type="submit">Logga in</button>
+    <div id="loginError" style="color:red;margin-top:.5rem;"></div>
+  </form>
+</div>
+<header>
+  <h1>Byggdagbok 3D</h1>
+  <div class="top-actions">
+    <button id="sidebarToggle" aria-label="Visa/Dölj sidomeny">☰</button>
+    <button id="compareToggle">Jämför veckor</button>
+    <button id="themeToggle" aria-label="Tema">🌗</button>
+    <button id="logoutBtn">Logga ut</button>
+  </div>
+</header>
+<div id="app" class="app hidden" aria-label="Applikation">
+  <aside id="sidebar">
+    <input id="search" type="search" placeholder="Sök..." aria-label="Sök veckor">
+    <button id="addWeek">Lägg till vecka</button>
+    <ul id="weekList" aria-label="Veckor"></ul>
+    <details>
+      <summary>Hjälp</summary>
+      <p>Lägg till vecka via knappen ovan. Klistra in Polycam-iframekoden i formuläret. Ladda upp tumnagel och PDF om du vill.</p>
+      <p>I jämförläget väljer du två veckor att visa sida vid sida.</p>
+      <p>Begränsning: 3D-renderingen styrs endast av Polycam, inga interna kontroller.</p>
+    </details>
+  </aside>
+  <main id="main"></main>
+</div>
+<template id="weekFormTmpl">
+  <form class="week-form" aria-label="Veckodata">
+    <div class="form-field">
+      <label>Veckonamn</label>
+      <input name="label" required>
+    </div>
+    <div class="form-field">
+      <label>Polycam iframekod</label>
+      <textarea name="iframe" rows="3"></textarea>
+    </div>
+    <div class="form-field">
+      <label>Veckans beskrivning</label>
+      <textarea name="desc" rows="4"></textarea>
+    </div>
+    <div class="form-field">
+      <label>Tumnagel (bild)</label>
+      <input name="thumb" type="file" accept="image/*">
+    </div>
+    <div class="form-field">
+      <label>PDF-bilagor</label>
+      <input name="pdfs" type="file" multiple accept="application/pdf">
+    </div>
+    <div style="text-align:right;">
+      <button type="submit">Spara</button>
+    </div>
+  </form>
+</template>
+<script type="module">
+const LS_KEY='gsDiary.v1.weeks';
+const THEME_KEY='gsDiary.v1.theme';
+const SESSION_KEY='gsDiary.session';
+const DB_NAME='gsDiaryDB';
+
+const loginScreen=document.getElementById('loginScreen');
+const loginForm=document.getElementById('loginForm');
+const loginError=document.getElementById('loginError');
+const app=document.getElementById('app');
+const weekListEl=document.getElementById('weekList');
+const searchEl=document.getElementById('search');
+const mainEl=document.getElementById('main');
+const themeToggle=document.getElementById('themeToggle');
+const compareToggle=document.getElementById('compareToggle');
+const logoutBtn=document.getElementById('logoutBtn');
+const sidebar=document.getElementById('sidebar');
+const sidebarToggle=document.getElementById('sidebarToggle');
+const addWeekBtn=document.getElementById('addWeek');
+
+function applyTheme(){
+  const t=localStorage.getItem(THEME_KEY)||'light';
+  document.documentElement.classList.toggle('dark',t==='dark');
+}
+applyTheme();
+themeToggle.addEventListener('click',()=>{
+  const t=localStorage.getItem(THEME_KEY)==='dark'?'light':'dark';
+  localStorage.setItem(THEME_KEY,t);applyTheme();
+});
+
+loginForm.addEventListener('submit',e=>{
+  e.preventDefault();
+  const u=loginForm.loginUser.value;
+  const p=loginForm.loginPass.value;
+  if(u==='admin1'&&p==='admin1'){
+    sessionStorage.setItem(SESSION_KEY,'1');
+    loginScreen.classList.add('hidden');
+    startApp();
+  }else{
+    loginError.textContent='Felaktiga uppgifter.';
+  }
+});
+logoutBtn.addEventListener('click',()=>{sessionStorage.removeItem(SESSION_KEY);location.reload();});
+
+function ensureSampleWeek(){
+  if(listWeeks().length===0){
+    const w={id:crypto.randomUUID(),label:'Vecka 34',embedSrc:'',description:'',thumbBlobId:null,pdfBlobIds:[],pdfNames:[],createdAt:Date.now()};
+    saveWeek(w);
+  }
+}
+
+function listWeeks(){return JSON.parse(localStorage.getItem(LS_KEY)||'[]');}
+function saveWeeks(arr){localStorage.setItem(LS_KEY,JSON.stringify(arr));}
+function saveWeek(w){const arr=listWeeks();arr.push(w);saveWeeks(arr);}
+function updateWeek(w){const arr=listWeeks().map(x=>x.id===w.id?w:x);saveWeeks(arr);}
+function deleteWeek(id){const arr=listWeeks();const w=arr.find(x=>x.id===id);if(w){if(w.thumbBlobId)deleteBlob(w.thumbBlobId);(w.pdfBlobIds||[]).forEach(id=>deleteBlob(id));}saveWeeks(arr.filter(x=>x.id!==id));}
+
+function openDB(){return new Promise((res,rej)=>{const r=indexedDB.open(DB_NAME,1);r.onupgradeneeded=e=>{e.target.result.createObjectStore('files');};r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
+async function putBlob(id,blob){const db=await openDB();return new Promise((res,rej)=>{const tx=db.transaction('files','readwrite');tx.objectStore('files').put(blob,id);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error);});}
+async function getBlob(id){const db=await openDB();return new Promise((res,rej)=>{const tx=db.transaction('files');const rq=tx.objectStore('files').get(id);rq.onsuccess=()=>res(rq.result);rq.onerror=()=>rej(rq.error);});}
+async function deleteBlob(id){const db=await openDB();return new Promise((res,rej)=>{const tx=db.transaction('files','readwrite');tx.objectStore('files').delete(id);tx.oncomplete=()=>res();tx.onerror=()=>rej(tx.error);});}
+
+function weekListItem(w){
+  const li=document.createElement('li');
+  li.className='week-item';
+  li.tabIndex=0;
+  let thumb=document.createElement('div');
+  if(w.thumbBlobId){
+    getBlob(w.thumbBlobId).then(b=>{const url=URL.createObjectURL(b);const img=document.createElement('img');img.loading='lazy';img.src=url;thumb.replaceWith(img);});
+  }else{
+    thumb.className='avatar';
+    thumb.textContent=w.label.split(' ').pop();
+  }
+  li.appendChild(thumb);
+  const span=document.createElement('span');span.textContent=w.label;li.appendChild(span);
+  li.addEventListener('click',()=>{location.hash='week/'+w.id;});
+  const actions=document.createElement('details');actions.innerHTML='<summary aria-label="Åtgärder">⋯</summary><div><button data-act="view">Visa</button><button data-act="edit">Redigera</button><button data-act="del">Ta bort</button></div>';
+  actions.addEventListener('click',e=>{e.stopPropagation();const act=e.target.getAttribute('data-act');if(!act)return;if(act==='view'){location.hash='week/'+w.id;}if(act==='edit'){openWeekForm(w);}if(act==='del'){if(confirm('Ta bort?')){deleteWeek(w.id);renderWeekList();if(location.hash==='week/'+w.id)mainEl.innerHTML='';}}actions.removeAttribute('open');});
+  li.appendChild(actions);
+  return li;
+}
+
+let searchTerm='';
+function renderWeekList(){
+  weekListEl.innerHTML='';
+  const weeks=listWeeks().filter(w=>w.label.toLowerCase().includes(searchTerm)||w.description.toLowerCase().includes(searchTerm));
+  weeks.sort((a,b)=>a.createdAt-b.createdAt);
+  weeks.forEach(w=>weekListEl.appendChild(weekListItem(w)));
+}
+searchEl.addEventListener('input',debounce(e=>{searchTerm=e.target.value.toLowerCase();renderWeekList();},300));
+
+function debounce(fn,ms){let t;return (...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms);};}
+
+function sanitizeIframe(str){
+  const tpl=document.createElement('template');tpl.innerHTML=str.trim();
+  const iframe=tpl.content.querySelector('iframe');
+  if(!iframe||tpl.content.children.length!==1)throw new Error('Endast en iframe krävs.');
+  const url=new URL(iframe.src);
+  if(url.protocol!=='https:'||!url.hostname.endsWith('poly.cam'))throw new Error('Endast poly.cam tillåts.');
+  const clean=document.createElement('iframe');
+  clean.src=url.href;
+  clean.title=iframe.title||'Polycam';
+  clean.loading='lazy';
+  clean.allowFullscreen=true;
+  clean.referrerPolicy='no-referrer';
+  clean.sandbox='';
+  return clean;
+}
+
+function showWeek(id){
+  const w=listWeeks().find(x=>x.id===id);
+  if(!w){mainEl.textContent='Vecka saknas';return;}
+  mainEl.innerHTML='';
+  const h=document.createElement('h2');h.textContent=w.label;mainEl.appendChild(h);
+  const viewer=document.createElement('div');viewer.id='weekViewer';viewer.className='no-context';
+  const frame=document.createElement('div');frame.className='viewer-frame';
+  if(w.embedSrc){
+    const iframe=document.createElement('iframe');
+    iframe.src=w.embedSrc;iframe.loading='lazy';iframe.allowFullscreen=true;iframe.referrerPolicy='no-referrer';iframe.sandbox='';
+    frame.appendChild(iframe);
+  }else{
+    frame.innerHTML='<p>Ingen Polycam-iframe.</p>';
+  }
+  viewer.appendChild(frame);
+  const vc=document.createElement('div');vc.className='viewer-controls';
+  const fs=document.createElement('button');fs.textContent='Fullskärm';fs.addEventListener('click',()=>{viewer.requestFullscreen();});
+  const open=document.createElement('button');open.textContent='Öppna i ny flik';open.addEventListener('click',()=>{if(w.embedSrc)window.open(w.embedSrc,'_blank');});
+  const hide=document.createElement('button');hide.textContent='Dölj sidomeny';hide.addEventListener('click',()=>{sidebar.classList.toggle('collapsed');});
+  vc.append(fs,open,hide);
+  viewer.appendChild(vc);
+  mainEl.appendChild(viewer);
+  const notes=document.createElement('textarea');notes.value=w.description||'';notes.placeholder='Anteckningar';notes.addEventListener('blur',()=>{w.description=notes.value;updateWeek(w);renderWeekList();});
+  mainEl.appendChild(notes);
+  const pdfList=document.createElement('div');pdfList.id='pdfList';
+  w.pdfBlobIds.forEach((id,i)=>{const btn=document.createElement('button');btn.textContent=w.pdfNames[i]||('PDF '+(i+1));btn.addEventListener('click',async()=>{const blob=await getBlob(id);const url=URL.createObjectURL(blob);openPDFModal(url);});pdfList.appendChild(btn);});
+  mainEl.appendChild(pdfList);
+}
+function openPDFModal(url){
+  const m=document.createElement('div');m.className='modal';
+  const c=document.createElement('div');c.className='modal-content no-context';
+  const closeBtn=document.createElement('button');closeBtn.textContent='Stäng';closeBtn.addEventListener('click',()=>{m.remove();});
+  const fr=document.createElement('iframe');fr.src=url;fr.setAttribute('sandbox','');fr.referrerPolicy='no-referrer';
+  c.append(closeBtn,fr);m.appendChild(c);document.body.appendChild(m);
+  trapFocus(c);
+  m.addEventListener('click',e=>{if(e.target===m)m.remove();});
+}
+function trapFocus(node){
+  const fables=node.querySelectorAll('a,button,input,textarea,select,[tabindex]');
+  const first=fables[0];const last=fables[fables.length-1];
+  node.addEventListener('keydown',e=>{
+    if(e.key==='Tab'){
+      if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
+      else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
+    }else if(e.key==='Escape'){node.parentElement.remove();}
+  });
+  first&&first.focus();
+}
+document.addEventListener('contextmenu',e=>{if(e.target.closest('.no-context'))e.preventDefault();});
+
+function renderCompare(idA,idB){
+  const wrap=document.createElement('div');wrap.className='compare-wrap';
+  const weeks=listWeeks();
+  const selectA=document.createElement('select');selectA.innerHTML='<option value="">Välj vecka A</option>'+weeks.map(w=>`<option value="${w.id}">${w.label}</option>`).join('');
+  const selectB=document.createElement('select');selectB.innerHTML='<option value="">Välj vecka B</option>'+weeks.map(w=>`<option value="${w.id}">${w.label}</option>`).join('');
+  selectA.value=idA||'';selectB.value=idB||'';
+  function buildCol(id){
+    const w=weeks.find(x=>x.id===id);const col=document.createElement('div');col.className='compare-col no-context';
+    if(!w){col.textContent='Ingen vecka';return col;}
+    const title=document.createElement('h3');title.textContent=w.label;col.appendChild(title);
+    const desc=document.createElement('p');desc.textContent=w.description;col.appendChild(desc);
+    const frame=document.createElement('div');frame.className='viewer-frame';
+    if(w.embedSrc){const ifr=document.createElement('iframe');ifr.src=w.embedSrc;ifr.loading='lazy';ifr.allowFullscreen=true;ifr.referrerPolicy='no-referrer';ifr.sandbox='';frame.appendChild(ifr);}
+    col.appendChild(frame);
+    const ctr=document.createElement('div');ctr.className='viewer-controls';
+    const fs=document.createElement('button');fs.textContent='Fullskärm';fs.addEventListener('click',()=>{col.requestFullscreen();});
+    const swap=document.createElement('button');swap.textContent='Byt plats';swap.addEventListener('click',()=>{location.hash=`compare/${selectB.value}/${selectA.value}`;});
+    ctr.append(fs,swap);col.appendChild(ctr);
+    return col;
+  }
+  selectA.addEventListener('change',()=>{location.hash=`compare/${selectA.value}/${selectB.value}`;});
+  selectB.addEventListener('change',()=>{location.hash=`compare/${selectA.value}/${selectB.value}`;});
+  mainEl.innerHTML='';
+  const selWrap=document.createElement('div');selWrap.append(selectA,selectB);mainEl.appendChild(selWrap);
+  wrap.id='compareWrap';
+  wrap.append(buildCol(idA),buildCol(idB));
+  mainEl.appendChild(wrap);
+}
+
+function openWeekForm(existing){
+  const tmpl=document.getElementById('weekFormTmpl');const form=tmpl.content.firstElementChild.cloneNode(true);
+  form.label.value=existing?existing.label:`Vecka ${new Date().getWeek?new Date().getWeek():''}`;
+  form.desc.value=existing?existing.description:'';
+  form.iframe.value=existing&&existing.embedSrc?`<iframe src="${existing.embedSrc}"></iframe>`:'';
+  const modal=document.createElement('div');modal.className='modal';
+  const box=document.createElement('div');box.className='modal-content';box.appendChild(form);modal.appendChild(box);document.body.appendChild(modal);trapFocus(box);
+  form.addEventListener('submit',async e=>{
+    e.preventDefault();
+    try{
+      let src='';
+      if(form.iframe.value.trim()){
+        const iframe=sanitizeIframe(form.iframe.value);src=iframe.src;
+      }
+      let thumbId=existing?existing.thumbBlobId:null;
+      if(form.thumb.files[0]){
+        const file=form.thumb.files[0];
+        const scaled=await scaleImage(file,800);
+        thumbId='files:thumb:'+crypto.randomUUID();
+        await putBlob(thumbId,scaled);
+      }
+      let pdfIds=existing?existing.pdfBlobIds.slice():[];let pdfNames=existing?existing.pdfNames.slice():[];
+      if(form.pdfs.files.length){for(const f of form.pdfs.files){const id='files:pdf:'+crypto.randomUUID();await putBlob(id,f);pdfIds.push(id);pdfNames.push(f.name);}}
+      const w=existing?existing:{id:crypto.randomUUID(),createdAt:Date.now(),pdfBlobIds:[],pdfNames:[]};
+      w.label=form.label.value;
+      w.embedSrc=src;
+      w.description=form.desc.value;
+      w.thumbBlobId=thumbId;
+      w.pdfBlobIds=pdfIds;
+      w.pdfNames=pdfNames;
+      existing?updateWeek(w):saveWeek(w);
+      renderWeekList();
+      modal.remove();
+    }catch(err){alert('Fel: '+err.message);}
+  });
+  modal.addEventListener('click',e=>{if(e.target===modal)modal.remove();});
+}
+
+async function scaleImage(file,maxWidth){
+  const img=await new Promise(res=>{const i=new Image();i.onload=()=>res(i);i.src=URL.createObjectURL(file);});
+  const canvas=document.createElement('canvas');
+  const ratio=Math.min(1,maxWidth/img.width);
+  canvas.width=img.width*ratio;canvas.height=img.height*ratio;
+  const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0,canvas.width,canvas.height);
+  return new Promise(res=>canvas.toBlob(b=>res(b),'image/jpeg',0.8));
+}
+
+searchEl.addEventListener('keydown',e=>e.stopPropagation());
+sidebarToggle.addEventListener('click',()=>{sidebar.classList.toggle('collapsed');});
+
+addWeekBtn.addEventListener('click',()=>openWeekForm());
+
+function startApp(){
+  ensureSampleWeek();
+  renderWeekList();
+  app.classList.remove('hidden');
+  handleHash();
+}
+
+function handleHash(){
+  const h=location.hash.slice(1);
+  if(h.startsWith('week/')){
+    const id=h.split('/')[1];
+    showWeek(id);
+  }else if(h.startsWith('compare')){
+    const parts=h.split('/');
+    renderCompare(parts[1],parts[2]);
+  }else{
+    mainEl.innerHTML='<p>Välj en vecka eller använd jämförläge.</p>';
+  }
+}
+window.addEventListener('hashchange',handleHash);
+
+if(sessionStorage.getItem(SESSION_KEY)==='1'){loginScreen.classList.add('hidden');startApp();}
+</script>
+</body>
+</html>
