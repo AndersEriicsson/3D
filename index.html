@@ -20,10 +20,11 @@
                 label: "Vecka 34",
                 embedSrc: "https://*.poly.cam/...",
                 description: "text",
-                thumbBlobId: "files:thumb:uuid" | null,
-                pdfBlobIds: ["files:pdf:uuid", ...],
-                createdAt: 1733184000000
+               thumbBlobId: "files:thumb:uuid" | null,
+               pdfBlobIds: ["files:pdf:uuid", ...],
+               createdAt: 1733184000000
               }
+            // TODO: weeks.json kan i framtiden innehålla URL:er till tumnaglar/PDF:er.
             - nyckel "gsDiary.theme" : "light" | "dark"
             - nyckel "gsDiary.session" : { loggedIn: true } i sessionStorage
         * IndexedDB:
@@ -252,6 +253,8 @@
       <details class="card" style="margin-top:12px;">
         <summary><strong>Hjälp</strong></summary>
         <ul>
+          <li>Denna sida kan läsa veckor från <code>data/weeks.json</code> när localStorage är tomt.</li>
+          <li><button id="syncBtn" class="btn-ghost">Synka från repo</button></li>
           <li><strong>Lägg till vecka:</strong> knappen “Lägg till vecka”.</li>
           <li><strong>Polycam:</strong> klistra in exakt <code>&lt;iframe ...&gt;&lt;/iframe&gt;</code> från <em>poly.cam</em>.</li>
           <li><strong>Tumnagel &amp; PDF:</strong> ladda upp i dialogen. Tumnageln skalas ner.</li>
@@ -259,6 +262,7 @@
           <li><strong>Begränsningar:</strong> vi kan inte styra 3D-renderingen p.g.a. cross-origin.</li>
           <li><button id="resetBtn" class="btn-ghost">Rensa lagring</button></li>
         </ul>
+        <div id="syncMsg" class="muted" aria-live="polite"></div>
       </details>
       <div class="row" style="margin-top:10px;">
         <button id="logoutBtn" class="btn-ghost">Logga ut</button>
@@ -580,6 +584,8 @@
       searchInput: $('#searchInput'),
       addWeekBtn: $('#addWeekBtn'),
       resetBtn: $('#resetBtn'),
+      syncBtn: $('#syncBtn'),
+      syncMsg: $('#syncMsg'),
       logoutBtn: $('#logoutBtn'),
       themeBtn: $('#themeBtn'),
       collapseBtn: $('#collapseBtn'),
@@ -1004,7 +1010,7 @@
       $$('[data-close]', root).forEach(b => b.addEventListener('click', closeModal));
       trap();
     }
-    function confirmDialog(title, body='') {
+    function confirmDialog(title, body='', yesLabel='Ta bort') {
       return new Promise(resolve => {
         const html = `
           <div class="modal" role="dialog" aria-modal="true" aria-labelledby="confTitle">
@@ -1012,7 +1018,7 @@
             <p>${escapeHtml(body)}</p>
             <footer>
               <button class="btn-ghost" data-no>Avbryt</button>
-              <button class="btn-danger" data-yes>Ta bort</button>
+              <button class="btn-danger" data-yes>${escapeHtml(yesLabel)}</button>
             </footer>
           </div>`;
         const { root, trap } = openModal(html);
@@ -1025,6 +1031,69 @@
     // =============== Helpers ===============
     function escapeHtml(s='') {
       return s.replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[m]));
+    }
+
+    // =============== Repo-synk (weeks.json) ===============
+    async function fetchRepoWeeks() {
+      try {
+        const res = await fetch('data/weeks.json', { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!Array.isArray(data)) throw new Error('JSON måste vara en array.');
+        const cleaned = [], errors = [];
+        data.forEach((w, i) => {
+          try {
+            if (typeof w.id !== 'string' || typeof w.label !== 'string' || typeof w.description !== 'string' || typeof w.createdAt !== 'number') throw new Error('Saknar fält.');
+            const embedSrc = w.embedSrc ? sanitizePolycamIframe(`<iframe src="${w.embedSrc}"></iframe>`) : '';
+            cleaned.push({
+              id: w.id,
+              label: w.label,
+              embedSrc,
+              description: w.description,
+              thumbBlobId: w.thumbBlobId ?? null,
+              pdfBlobIds: Array.isArray(w.pdfBlobIds) ? w.pdfBlobIds : [],
+              createdAt: w.createdAt
+            });
+            // TODO: stöd för URL-baserade thumbnails/PDF:er kan läggas till här i framtiden.
+          } catch (err) {
+            errors.push(`Post ${i+1}: ${err.message}`);
+            console.error(`Post ${i+1} ogiltig: ${err.message}`);
+          }
+        });
+        return { weeks: cleaned, errors };
+      } catch (err) {
+        console.error('Kunde inte läsa data/weeks.json:', err);
+        return { weeks: [], errors: [err.message] };
+      }
+    }
+
+    async function repoSyncIfEmpty() {
+      if (loadWeeks().length) return;
+      const { weeks, errors } = await fetchRepoWeeks();
+      if (errors.length) syncToast('Fel vid läsning av weeks.json.');
+      if (weeks.length) saveWeeks(weeks);
+    }
+
+    async function repoSync() {
+      const ok = await confirmDialog('Synka från repo?', 'Detta ersätter alla lokala veckor.', 'Ersätt');
+      if (!ok) return false;
+      const { weeks, errors } = await fetchRepoWeeks();
+      if (!weeks.length) {
+        syncToast(errors.length ? 'Fel vid läsning av weeks.json.' : 'Inga giltiga poster att synka.');
+        return false;
+      }
+      if (errors.length) syncToast('Vissa poster hoppades över.');
+      saveWeeks(weeks);
+      syncToast('Synk klar.');
+      return true;
+    }
+
+    function syncToast(msg) {
+      const el = els.syncMsg;
+      if (!el) return;
+      el.textContent = msg;
+      clearTimeout(syncToast._t);
+      syncToast._t = setTimeout(() => { el.textContent = ''; }, 4000);
     }
 
     // =============== Seed data ===============
@@ -1044,20 +1113,28 @@
     }
 
     // =============== Login wiring ===============
-    els.loginForm.addEventListener('submit', (e) => {
+    els.loginForm.addEventListener('submit', async (e) => {
       e.preventDefault();
       const user = $('#user').value.trim();
       const pass = $('#pass').value.trim();
       if (user === 'admin1' && pass === 'admin1') {
         setLoggedIn();
-        showApp();
+        await showApp();
       } else {
         els.loginError.textContent = 'Felaktiga uppgifter.';
       }
     });
 
-    function showApp() {
+    async function showApp() {
       applyTheme();
+      const qs = new URLSearchParams(location.search);
+      if (qs.get('forceSync') === '1') {
+        await repoSync();
+        qs.delete('forceSync');
+        history.replaceState(null, '', location.pathname + (qs.toString() ? '?' + qs.toString() : '') + location.hash);
+      } else {
+        await repoSyncIfEmpty();
+      }
       ensureSeed();
       $('#loginView').classList.add('hidden');
       $('#app').classList.remove('hidden');
@@ -1075,6 +1152,10 @@
       localStorage.removeItem(WEEKS_KEY);
       indexedDB.deleteDatabase(DB_NAME);
       renderAll();
+    };
+    els.syncBtn.onclick = async () => {
+      const changed = await repoSync();
+      if (changed) await renderAll();
     };
     els.addWeekBtn.onclick = () => openWeekDialog();
     els.openNewTab.onclick = (e) => { /* link set in render */ };

@@ -1,0 +1,29 @@
+[
+  {
+    "id": "uuid-1",
+    "label": "Vecka 34",
+    "embedSrc": "https://poly.cam/capture/placeholder-1",
+    "description": "Text…",
+    "thumbBlobId": null,
+    "pdfBlobIds": [],
+    "createdAt": 1733184000000
+  },
+  {
+    "id": "uuid-2",
+    "label": "Vecka 35",
+    "embedSrc": "https://poly.cam/capture/placeholder-2",
+    "description": "Mer text…",
+    "thumbBlobId": null,
+    "pdfBlobIds": [],
+    "createdAt": 1733788800000
+  },
+  {
+    "id": "uuid-3",
+    "label": "Vecka 36",
+    "embedSrc": "",
+    "description": "Exempel utan Polycam-embed.",
+    "thumbBlobId": null,
+    "pdfBlobIds": [],
+    "createdAt": 1734393600000
+  }
+]
